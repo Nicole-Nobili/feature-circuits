@@ -95,6 +95,7 @@ def get_circuit(
         nodes_only=False,
         node_threshold=0.1,
         edge_threshold=0.01,
+        component_level=False,
 ):
     all_submods = [embed] + [submod for layer_submods in zip(mlps, attns, resids) for submod in layer_submods]
     
@@ -107,7 +108,8 @@ def get_circuit(
         dictionaries,
         metric_fn,
         metric_kwargs=metric_kwargs,
-        method='ig' # get better approximations for early layers by using ig
+        method='ig', # get better approximations for early layers by using ig
+        component_level=component_level,
     )
 
     def unflatten(tensor): # will break if dictionaries vary in size between layers
@@ -452,6 +454,8 @@ if __name__ == '__main__':
     parser.add_argument("--plot_dir", type=str, default="circuits/figures/",
                         help="Directory to save figures.")
     parser.add_argument('--seed', type=int, default=12)
+    parser.add_argument('--component_level', default=False, action='store_true',
+                        help="Use if you want to run circuit discovery on a component level.")
     parser.add_argument('--device', type=str, default='cuda:0')
     args = parser.parse_args()
 
@@ -465,32 +469,34 @@ if __name__ == '__main__':
     mlps = [layer.mlp for layer in model.gpt_neox.layers]
     resids = [layer for layer in model.gpt_neox.layers]
 
-    dictionaries = {}
-    if args.dict_id == 'id':
-        from dictionary_learning.dictionary import IdentityDict
-        dictionaries[embed] = IdentityDict(args.d_model)
-        for i in range(len(model.gpt_neox.layers)):
-            dictionaries[attns[i]] = IdentityDict(args.d_model)
-            dictionaries[mlps[i]] = IdentityDict(args.d_model)
-            dictionaries[resids[i]] = IdentityDict(args.d_model)
-    else:
-        dictionaries[embed] = AutoEncoder.from_pretrained(
-            f'{args.dict_path}/embed/{args.dict_id}_{args.dict_size}/ae.pt',
-            device=device
-        )
-        for i in range(len(model.gpt_neox.layers)):
-            dictionaries[attns[i]] = AutoEncoder.from_pretrained(
-                f'{args.dict_path}/attn_out_layer{i}/{args.dict_id}_{args.dict_size}/ae.pt',
+
+    if args.component_level:
+        dictionaries = {}
+        if args.dict_id == 'id':
+            from dictionary_learning.dictionary import IdentityDict
+            dictionaries[embed] = IdentityDict(args.d_model)
+            for i in range(len(model.gpt_neox.layers)):
+                dictionaries[attns[i]] = IdentityDict(args.d_model)
+                dictionaries[mlps[i]] = IdentityDict(args.d_model)
+                dictionaries[resids[i]] = IdentityDict(args.d_model)
+        else:
+            dictionaries[embed] = AutoEncoder.from_pretrained(
+                f'{args.dict_path}/embed/{args.dict_id}_{args.dict_size}/ae.pt',
                 device=device
             )
-            dictionaries[mlps[i]] = AutoEncoder.from_pretrained(
-                f'{args.dict_path}/mlp_out_layer{i}/{args.dict_id}_{args.dict_size}/ae.pt',
-                device=device
-            )
-            dictionaries[resids[i]] = AutoEncoder.from_pretrained(
-                f'{args.dict_path}/resid_out_layer{i}/{args.dict_id}_{args.dict_size}/ae.pt',
-                device=device
-            )
+            for i in range(len(model.gpt_neox.layers)):
+                dictionaries[attns[i]] = AutoEncoder.from_pretrained(
+                    f'{args.dict_path}/attn_out_layer{i}/{args.dict_id}_{args.dict_size}/ae.pt',
+                    device=device
+                )
+                dictionaries[mlps[i]] = AutoEncoder.from_pretrained(
+                    f'{args.dict_path}/mlp_out_layer{i}/{args.dict_id}_{args.dict_size}/ae.pt',
+                    device=device
+                )
+                dictionaries[resids[i]] = AutoEncoder.from_pretrained(
+                    f'{args.dict_path}/resid_out_layer{i}/{args.dict_id}_{args.dict_size}/ae.pt',
+                    device=device
+                )
     
     if args.nopair:
         save_basename = os.path.splitext(os.path.basename(args.dataset))[0]
@@ -552,10 +558,11 @@ if __name__ == '__main__':
                 aggregation=args.aggregation,
                 node_threshold=args.node_threshold,
                 edge_threshold=args.edge_threshold,
+                component_level=args.component_level,
             )
 
             if running_nodes is None:
-                running_nodes = {k : len(batch) * nodes[k].to('cpu') for k in nodes.keys() if k != 'y'}
+                running_nodes = {k : len(batch) * nodes[k].to('cpu') for k in nodes.keys() if k != 'y'} 
                 if not args.nodes_only: running_edges = { k : { kk : len(batch) * edges[k][kk].to('cpu') for kk in edges[k].keys() } for k in edges.keys()}
             else:
                 for k in nodes.keys():
@@ -570,7 +577,7 @@ if __name__ == '__main__':
             del nodes, edges
             gc.collect()
 
-        nodes = {k : v.to(device) / num_examples for k, v in running_nodes.items()}
+        nodes = {k : v.to(device) / num_examples for k, v in running_nodes.items()} #aggregation mean
         if not args.nodes_only: 
             edges = {k : {kk : 1/num_examples * v.to(device) for kk, v in running_edges[k].items()} for k in running_edges.keys()}
         else: edges = None

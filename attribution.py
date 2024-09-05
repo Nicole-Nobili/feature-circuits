@@ -22,6 +22,7 @@ def _pe_attrib(
         dictionaries,
         metric_fn,
         metric_kwargs=dict(),
+        component_level=False,  
 ):
     
     # first run through a test input to figure out which hidden states are tuples
@@ -96,6 +97,7 @@ def _pe_ig(
         metric_fn,
         steps=10,
         metric_kwargs=dict(),
+        component_level=False,
 ):
     
     # first run through a test input to figure out which hidden states are tuples
@@ -184,6 +186,7 @@ def _pe_exact(
     submodules,
     dictionaries,
     metric_fn,
+    component_level=False,
     ):
 
     # first run through a test input to figure out which hidden states are tuples
@@ -195,14 +198,17 @@ def _pe_exact(
     hidden_states_clean = {}
     with model.trace(clean, **tracer_kwargs), t.inference_mode():
         for submodule in submodules:
-            dictionary = dictionaries[submodule]
             x = submodule.output
             if is_tuple[submodule]:
                 x = x[0]
-            f = dictionary.encode(x)
-            x_hat = dictionary.decode(f)
-            residual = x - x_hat
-            hidden_states_clean[submodule] = SparseAct(act=f, res=residual).save()
+            if not component_level:
+                dictionary = dictionaries[submodule]
+                f = dictionary.encode(x)
+                x_hat = dictionary.decode(f)
+                residual = x - x_hat
+                hidden_states_clean[submodule] = SparseAct(act=f, res=residual).save()
+            else:
+                hidden_states_clean[submodule] = SparseAct(act=x, res=t.zeros_like(x)).save()
         metric_clean = metric_fn(model).save()
     hidden_states_clean = {k : v.value for k, v in hidden_states_clean.items()}
 
@@ -215,14 +221,17 @@ def _pe_exact(
         hidden_states_patch = {}
         with model.trace(patch, **tracer_kwargs), t.inference_mode():
             for submodule in submodules:
-                dictionary = dictionaries[submodule]
                 x = submodule.output
                 if is_tuple[submodule]:
                     x = x[0]
-                f = dictionary.encode(x)
-                x_hat = dictionary.decode(f)
-                residual = x - x_hat
-                hidden_states_patch[submodule] = SparseAct(act=f, res=residual).save()
+                if not component_level:
+                    dictionary = dictionaries[submodule]
+                    f = dictionary.encode(x)
+                    x_hat = dictionary.decode(f)
+                    residual = x - x_hat
+                    hidden_states_patch[submodule] = SparseAct(act=f, res=residual).save()
+                else:
+                    hidden_states_patch[submodule] = SparseAct(act=x, res=t.zeros_like(x)).save()
             metric_patch = metric_fn(model).save()
         total_effect = metric_patch.value - metric_clean.value
         hidden_states_patch = {k : v.value for k, v in hidden_states_patch.items()}
@@ -230,38 +239,51 @@ def _pe_exact(
     effects = {}
     deltas = {}
     for submodule in submodules:
-        dictionary = dictionaries[submodule]
         clean_state = hidden_states_clean[submodule]
         patch_state = hidden_states_patch[submodule]
         effect = SparseAct(act=t.zeros_like(clean_state.act), resc=t.zeros(*clean_state.res.shape[:-1])).to(model.device)
         
+        if not component_level:
+            dictionary = dictionaries[submodule]
+        
         # iterate over positions and features for which clean and patch differ
-        idxs = t.nonzero(patch_state.act - clean_state.act)
-        for idx in tqdm(idxs):
+        if component_level:
             with t.inference_mode():
                 with model.trace(clean, **tracer_kwargs):
-                    f = clean_state.act.clone()
-                    f[tuple(idx)] = patch_state.act[tuple(idx)]
-                    x_hat = dictionary.decode(f)
                     if is_tuple[submodule]:
-                        submodule.output[0][:] = x_hat + clean_state.res
+                        submodule.output[0][:] = patch_state.act 
                     else:
-                        submodule.output = x_hat + clean_state.res
+                        submodule.output = patch_state.act
                     metric = metric_fn(model).save()
-                effect.act[tuple(idx)] = (metric.value - metric_clean.value).sum()
+                effect.act = (metric.value - metric_clean.value).sum()
+        
+        else:
+            idxs = t.nonzero(patch_state.act - clean_state.act)
+            for idx in tqdm(idxs):
+                with t.inference_mode():
+                    with model.trace(clean, **tracer_kwargs):
+                        f = clean_state.act.clone()
+                        f[tuple(idx)] = patch_state.act[tuple(idx)]
+                        x_hat = dictionary.decode(f)
+                        if is_tuple[submodule]:
+                            submodule.output[0][:] = x_hat + clean_state.res
+                        else:
+                            submodule.output = x_hat + clean_state.res
+                        metric = metric_fn(model).save()
+                    effect.act[tuple(idx)] = (metric.value - metric_clean.value).sum()
 
-        for idx in list(ndindex(effect.resc.shape)):
-            with t.inference_mode():
-                with model.trace(clean, **tracer_kwargs):
-                    res = clean_state.res.clone()
-                    res[tuple(idx)] = patch_state.res[tuple(idx)]
-                    x_hat = dictionary.decode(clean_state.act)
-                    if is_tuple[submodule]:
-                        submodule.output[0][:] = x_hat + res
-                    else:
-                        submodule.output = x_hat + res
-                    metric = metric_fn(model).save()
-                effect.resc[tuple(idx)] = (metric.value - metric_clean.value).sum()
+            for idx in list(ndindex(effect.resc.shape)):
+                with t.inference_mode():
+                    with model.trace(clean, **tracer_kwargs):
+                        res = clean_state.res.clone()
+                        res[tuple(idx)] = patch_state.res[tuple(idx)]
+                        x_hat = dictionary.decode(clean_state.act)
+                        if is_tuple[submodule]:
+                            submodule.output[0][:] = x_hat + res
+                        else:
+                            submodule.output = x_hat + res
+                        metric = metric_fn(model).save()
+                    effect.resc[tuple(idx)] = (metric.value - metric_clean.value).sum()
         
         effects[submodule] = effect
         deltas[submodule] = patch_state - clean_state
@@ -278,14 +300,15 @@ def patching_effect(
         metric_fn,
         method='attrib',
         steps=10,
-        metric_kwargs=dict()
+        metric_kwargs=dict(),
+        component_level=False,
 ):
     if method == 'attrib':
-        return _pe_attrib(clean, patch, model, submodules, dictionaries, metric_fn, metric_kwargs=metric_kwargs)
+        return _pe_attrib(clean, patch, model, submodules, dictionaries, metric_fn, metric_kwargs=metric_kwargs, component_level=component_level)
     elif method == 'ig':
-        return _pe_ig(clean, patch, model, submodules, dictionaries, metric_fn, steps=steps, metric_kwargs=metric_kwargs)
+        return _pe_ig(clean, patch, model, submodules, dictionaries, metric_fn, steps=steps, metric_kwargs=metric_kwargs, component_level=component_level)
     elif method == 'exact':
-        return _pe_exact(clean, patch, model, submodules, dictionaries, metric_fn)
+        return _pe_exact(clean, patch, model, submodules, dictionaries, metric_fn, component_level=component_level)
     else:
         raise ValueError(f"Unknown method {method}")
 
