@@ -168,14 +168,7 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
                             node_threshold=0.1, edge_threshold=0.01, pen_thickness=3, annotations=None, save_dir='circuit',
                             plot_edges=False):
     
-    """_summary_
-
-    nodes need to be saved as node : value and maybe to be extendible as node: [value]
-    
-    Returns:
-        _type_: _description_
-    """
-
+    #TODO check
     # get min and max node effects
     min_effect = min([v.to_tensor().min() for n, v in nodes.items() if n != 'y'])
     max_effect = max([v.to_tensor().max() for n, v in nodes.items() if n != 'y'])
@@ -210,18 +203,34 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
         hex_code = f'#{red:02X}{green:02X}{blue:02X}'
         
         return hex_code, text_hex
+
+
+    annotations = None #TODO remove
     
     if annotations is None:
         def get_label(name):
             return name
     else:
-        def get_label(name): #TODO do this probably for single component
+        def get_label(name):
             seq, feat = name.split(", ")
             if feat in annotations:
                 component = feat.split('/')[0]
                 component = component.split('_')[0]
                 return f'{seq}, {annotations[feat]} ({component})'
             return name
+    
+    
+    def get_name(component, layer, idx, is_single_component=False):
+        match idx:
+            case (seq, feat):
+                if feat == 32768: feat = 'ε'
+                if layer == -1: return f'{seq}, embed/{feat}'
+                return f'{seq}, {component}_{layer}/{feat}'
+            case (feat,):
+                if feat == 32768: feat = 'ε'
+                if layer == -1: return f'embed/{feat}'
+                return f'{component}_{layer}/{feat}'
+            case _: raise ValueError(f"Invalid idx: {idx}")
 
     G = Digraph(name='Feature circuit')
     G.graph_attr.update(rankdir='BT', newrank='true')
@@ -260,8 +269,8 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
                 subgraph.attr(rank='same')
                 max_seq_pos = None
                 for idx, effect in nodes_by_submod[f'{component}_{layer}'].items(): #TODO should be ok if nodes : node : [value]
-                    name = get_name(component, layer, idx) #TODO understand well what it does and change it
-                    seq_pos, basename = name.split(", ")
+                    name = get_name(component, layer, idx, is_single_component=True) #TODO understand well what it does and change it
+                    seq_pos = name.split(", ")[0]
                     fillhex, texthex = to_hex(effect)
                     if name[-1:] == 'ε':
                         subgraph.node(name, shape='triangle', group=seq_pos, width="1.6", height="0.8", fixedsize="true",
@@ -302,8 +311,8 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
                     for downstream_idx in nodes_by_submod[f'resid_{layer}'].keys():
                         weight = edges[f'{component}_{layer}'][f'resid_{layer}'][tuple(downstream_idx)][tuple(upstream_idx)].item()
                         if abs(weight) > edge_threshold:
-                            uname = get_name(component, layer, upstream_idx)
-                            dname = get_name('resid', layer, downstream_idx)
+                            uname = get_name(component, layer, upstream_idx, is_single_component=True)
+                            dname = get_name('resid', layer, downstream_idx, is_single_component=True)
                             G.edge(
                                 uname, dname,
                                 penwidth=str(abs(weight) * pen_thickness),
@@ -318,8 +327,8 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
                     for downstream_idx in nodes_by_submod[f'{component}_{layer}'].keys():
                         weight = edges[f'resid_{layer-1}'][f'{component}_{layer}'][tuple(downstream_idx)][tuple(upstream_idx)].item()
                         if abs(weight) > edge_threshold:
-                            uname = get_name('resid', layer-1, upstream_idx)
-                            dname = get_name(component, layer, downstream_idx)
+                            uname = get_name('resid', layer-1, upstream_idx, is_single_component=True)
+                            dname = get_name(component, layer, downstream_idx, is_single_component=True)
                             G.edge(
                                 uname, dname,
                                 penwidth=str(abs(weight) * pen_thickness),
@@ -332,7 +341,7 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
             for idx in nodes_by_submod[f'resid_{layers-1}'].keys():
                 weight = edges[f'resid_{layers-1}']['y'][tuple(idx)].item()
                 if abs(weight) > edge_threshold:
-                    name = get_name('resid', layers-1, idx)
+                    name = get_name('resid', layers-1, idx, is_single_component=True)
                     G.edge(
                         name, 'y',
                         penwidth=str(abs(weight) * pen_thickness),
@@ -350,7 +359,7 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
 def plot_circuit_posaligned(nodes, edges, layers=6, length=6, example_text="The managers that the parent likes",
                             node_threshold=0.1, edge_threshold=0.01, pen_thickness=3, annotations=None, save_dir='circuit',
                             plot_edges=False):
-
+    
     # get min and max node effects
     min_effect = min([v.to_tensor().min() for n, v in nodes.items() if n != 'y'])
     max_effect = max([v.to_tensor().max() for n, v in nodes.items() if n != 'y'])

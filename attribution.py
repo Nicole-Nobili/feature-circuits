@@ -241,21 +241,25 @@ def _pe_exact(
     for submodule in submodules:
         clean_state = hidden_states_clean[submodule]
         patch_state = hidden_states_patch[submodule]
-        effect = SparseAct(act=t.zeros_like(clean_state.act), resc=t.zeros(*clean_state.res.shape[:-1])).to(model.device)
         
         if not component_level:
             dictionary = dictionaries[submodule]
+            effect = SparseAct(act=t.zeros_like(clean_state.act), resc=t.zeros(*clean_state.res.shape[:-1])).to(model.device)
         
         # iterate over positions and features for which clean and patch differ
         if component_level:
-            with t.inference_mode():
-                with model.trace(clean, **tracer_kwargs):
-                    if is_tuple[submodule]:
-                        submodule.output[0][:] = patch_state.act 
-                    else:
-                        submodule.output = patch_state.act
-                    metric = metric_fn(model).save()
-                effect.act = (metric.value - metric_clean.value).sum()
+            effect = SparseAct(act=t.zeros(*clean_state.act.shape[:-1]), resc=t.zeros(*clean_state.res.shape[:-1])).to(model.device)
+            for idx in tqdm(list(ndindex(effect.act.shape))):
+                with t.inference_mode():
+                    with model.trace(clean, **tracer_kwargs):
+                        act = clean_state.act.clone()
+                        act[tuple(idx)] = patch_state.act[tuple(idx)]
+                        if is_tuple[submodule]:
+                            submodule.output[0][:] = act
+                        else:
+                            submodule.output = act
+                        metric = metric_fn(model).save()
+                    effect.act[tuple(idx)] = (metric.value - metric_clean.value).sum()
         
         else:
             idxs = t.nonzero(patch_state.act - clean_state.act)

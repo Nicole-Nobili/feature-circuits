@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from activation_utils import SparseAct
 from attribution import patching_effect, jvp
-from circuit_plotting import plot_circuit, plot_circuit_posaligned
+from circuit_plotting import plot_circuit, plot_circuit_posaligned, plot_nodes_posaligned
 from dictionary_learning import AutoEncoder
 from loading_utils import load_examples, load_examples_nopair
 from nnsight import LanguageModel
@@ -108,7 +108,7 @@ def get_circuit(
         dictionaries,
         metric_fn,
         metric_kwargs=metric_kwargs,
-        method='ig' if not component_level else 'exact', # get better approximations for early layers by using ig. For now for component level let's use exact that should be more precise since component level is faster
+        method='exact' if not component_level else 'exact', # get better approximations for early layers by using ig. For now for component level let's use exact that should be more precise since component level is faster
         component_level=component_level,
     )
 
@@ -468,8 +468,8 @@ if __name__ == '__main__':
     resids = [layer for layer in model.gpt_neox.layers]
 
 
+    dictionaries = {}
     if not args.component_level:
-        dictionaries = {}
         if args.dict_id == 'id':
             from dictionary_learning.dictionary import IdentityDict
             dictionaries[embed] = IdentityDict(args.d_model)
@@ -606,18 +606,33 @@ if __name__ == '__main__':
 
     if args.aggregation == "none":
         example = model.tokenizer.batch_decode(examples[0]["clean_prefix"])[0]
-        plot_circuit_posaligned(
-            nodes, 
-            edges,
-            layers=len(model.gpt_neox.layers), 
-            length=args.example_length,
-            example_text=example,
-            node_threshold=args.node_threshold, 
-            edge_threshold=args.edge_threshold, 
-            pen_thickness=args.pen_thickness, 
-            annotations=annotations, 
-            save_dir=f'{args.plot_dir}/{save_basename}_dict{args.dict_id}_node{args.node_threshold}_edge{args.edge_threshold}_n{num_examples}_agg{args.aggregation}'
-        )
+        if not args.component_level:
+            plot_circuit_posaligned(
+                nodes, 
+                edges,
+                layers=len(model.gpt_neox.layers), 
+                length=args.example_length,
+                example_text=example,
+                node_threshold=args.node_threshold, 
+                edge_threshold=args.edge_threshold, 
+                pen_thickness=args.pen_thickness, 
+                annotations=annotations, 
+                save_dir=f'{args.plot_dir}/{save_basename}_dict{args.dict_id}_node{args.node_threshold}_edge{args.edge_threshold}_n{num_examples}_agg{args.aggregation}'
+            )
+        else:
+            plot_nodes_posaligned(
+                nodes, 
+                edges,
+                layers=len(model.gpt_neox.layers), 
+                length=args.example_length,
+                example_text=example,
+                node_threshold=args.node_threshold, 
+                edge_threshold=args.edge_threshold, 
+                pen_thickness=args.pen_thickness, 
+                annotations=annotations, 
+                save_dir=f'{args.plot_dir}/{save_basename}_dict{args.dict_id}_node{args.node_threshold}_edge{args.edge_threshold}_n{num_examples}_agg{args.aggregation}'
+            )
+            
     else:
         plot_circuit(
             nodes, 
