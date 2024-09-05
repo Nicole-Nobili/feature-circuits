@@ -108,7 +108,7 @@ def get_circuit(
         dictionaries,
         metric_fn,
         metric_kwargs=metric_kwargs,
-        method='ig', # get better approximations for early layers by using ig
+        method='ig' if not component_level else 'exact', # get better approximations for early layers by using ig. For now for component level let's use exact that should be more precise since component level is faster
         component_level=component_level,
     )
 
@@ -116,10 +116,6 @@ def get_circuit(
         b, s, f = effects[resids[0]].act.shape
         unflattened = rearrange(tensor, '(b s x) -> b s x', b=b, s=s)
         return SparseAct(act=unflattened[...,:f], res=unflattened[...,f:])
-    
-    features_by_submod = {
-        submod : (effects[submod].to_tensor().flatten().abs() > node_threshold).nonzero().flatten().tolist() for submod in all_submods
-    }
 
     n_layers = len(resids)
 
@@ -138,6 +134,9 @@ def get_circuit(
         nodes = {k : v.mean(dim=0) for k, v in nodes.items()}
         return nodes, None
 
+    features_by_submod = {
+        submod : (effects[submod].to_tensor().flatten().abs() > node_threshold).nonzero().flatten().tolist() for submod in all_submods
+    }
     edges = defaultdict(lambda:{})
     edges[f'resid_{len(resids)-1}'] = { 'y' : effects[resids[-1]].to_tensor().flatten().to_sparse() }
 
@@ -153,7 +152,6 @@ def get_circuit(
             deltas[upstream],
             return_without_right=True,
         )
-
 
     # now we work backward through the model to get the edges
     for layer in reversed(range(len(resids))):
@@ -470,7 +468,7 @@ if __name__ == '__main__':
     resids = [layer for layer in model.gpt_neox.layers]
 
 
-    if args.component_level:
+    if not args.component_level:
         dictionaries = {}
         if args.dict_id == 'id':
             from dictionary_learning.dictionary import IdentityDict
