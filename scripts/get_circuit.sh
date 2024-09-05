@@ -17,3 +17,5 @@ python circuit.py \
 	--aggregation $AGG \
     --example_length $LENGTH \
     --dict_id $DICT_ID
+    --plot_only
+

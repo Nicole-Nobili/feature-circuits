@@ -456,6 +456,12 @@ if __name__ == '__main__':
                         help="Use if you want to run circuit discovery on a component level.")
     parser.add_argument('--device', type=str, default='cuda:0')
     args = parser.parse_args()
+    
+    args.plot_only = True
+    args.nodes_only = False
+    
+    if args.plot_only:
+        print("Plot only is true. Only plotting circuit...")
 
 
     device = args.device
@@ -466,10 +472,13 @@ if __name__ == '__main__':
     attns = [layer.attention for layer in model.gpt_neox.layers]
     mlps = [layer.mlp for layer in model.gpt_neox.layers]
     resids = [layer for layer in model.gpt_neox.layers]
+    
+    if args.plot_only:
+        print("Plot only is true. Only plotting circuit...")
 
 
     dictionaries = {}
-    if not args.component_level:
+    if not args.component_level and not args.plot_only:
         if args.dict_id == 'id':
             from dictionary_learning.dictionary import IdentityDict
             dictionaries[embed] = IdentityDict(args.d_model)
@@ -589,6 +598,7 @@ if __name__ == '__main__':
             t.save(save_dict, outfile)
 
     else:
+        print("Plot only is true. Loading circuit...")
         with open(f'{args.circuit_dir}/{save_basename}_dict{args.dict_id}_node{args.node_threshold}_edge{args.edge_threshold}_n{num_examples}_agg{args.aggregation}.pt', 'rb') as infile:
             save_dict = t.load(infile)
         nodes = save_dict['nodes']
@@ -607,6 +617,7 @@ if __name__ == '__main__':
     if args.aggregation == "none":
         example = model.tokenizer.batch_decode(examples[0]["clean_prefix"])[0]
         if not args.component_level:
+            print("Plotting circuit POSALIGNED")
             plot_circuit_posaligned(
                 nodes, 
                 edges,

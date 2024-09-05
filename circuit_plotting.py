@@ -3,7 +3,7 @@ from collections import defaultdict
 import re
 import os
 
-def get_name(component, layer, idx, is_single_component=False):
+def get_name(component, layer, idx):
     match idx:
         case (seq, feat):
             if feat == 32768: feat = 'ε'
@@ -221,15 +221,10 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
     
     
     def get_name(component, layer, idx, is_single_component=False):
-        match idx:
-            case (seq, feat):
-                if feat == 32768: feat = 'ε'
-                if layer == -1: return f'{seq}, embed/{feat}'
-                return f'{seq}, {component}_{layer}/{feat}'
-            case (feat,):
-                if feat == 32768: feat = 'ε'
-                if layer == -1: return f'embed/{feat}'
-                return f'{component}_{layer}/{feat}'
+        match idx: #TODO add heads 
+            case (seq,):
+                if layer == -1: return f'{seq}, embed'
+                return f'{seq}, {component}_{layer}'
             case _: raise ValueError(f"Invalid idx: {idx}")
 
     G = Digraph(name='Feature circuit')
@@ -268,7 +263,7 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
             with G.subgraph(name=f'layer {layer} {component}') as subgraph:
                 subgraph.attr(rank='same')
                 max_seq_pos = None
-                for idx, effect in nodes_by_submod[f'{component}_{layer}'].items(): #TODO should be ok if nodes : node : [value]
+                for idx, effect in nodes_by_submod[f'{component}_{layer}'].items():
                     name = get_name(component, layer, idx, is_single_component=True) #TODO understand well what it does and change it
                     seq_pos = name.split(", ")[0]
                     fillhex, texthex = to_hex(effect)
@@ -357,9 +352,8 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
     G.render(save_dir, format='png', cleanup=True)
 
 def plot_circuit_posaligned(nodes, edges, layers=6, length=6, example_text="The managers that the parent likes",
-                            node_threshold=0.1, edge_threshold=0.01, pen_thickness=3, annotations=None, save_dir='circuit',
-                            plot_edges=False):
-    
+                            node_threshold=0.1, edge_threshold=0.01, pen_thickness=3, annotations=None, save_dir='circuit'):
+
     # get min and max node effects
     min_effect = min([v.to_tensor().min() for n, v in nodes.items() if n != 'y'])
     max_effect = max([v.to_tensor().max() for n, v in nodes.items() if n != 'y'])
@@ -403,7 +397,6 @@ def plot_circuit_posaligned(nodes, edges, layers=6, length=6, example_text="The 
             seq, feat = name.split(", ")
             if feat in annotations:
                 component = feat.split('/')[0]
-                component = component.split('_')[0]
                 return f'{seq}, {annotations[feat]} ({component})'
             return name
 
@@ -424,6 +417,7 @@ def plot_circuit_posaligned(nodes, edges, layers=6, length=6, example_text="The 
             nodes_by_submod[f'{component}_{layer}'] = {
                 tuple(idx.tolist()) : submod_nodes[tuple(idx)].item() for idx in (submod_nodes.abs() > node_threshold).nonzero()
             }
+    edges['resid_-1'] = edges['embed']
 
     # add words to bottom of graph
     with G.subgraph(name=f'words') as subgraph:
@@ -478,54 +472,50 @@ def plot_circuit_posaligned(nodes, edges, layers=6, length=6, example_text="The 
                                 subgraph.edge(f'{component}_{layer}_#{seq_prev}_post', f'{component}_{layer}_#{seq}_pre', style='invis')
 
         
-        if plot_edges:
-            edges['resid_-1'] = edges['embed']
-            for component in ['attn', 'mlp']:
-                if layer == -1: continue
-                for upstream_idx in nodes_by_submod[f'{component}_{layer}'].keys():
-                    for downstream_idx in nodes_by_submod[f'resid_{layer}'].keys():
-                        weight = edges[f'{component}_{layer}'][f'resid_{layer}'][tuple(downstream_idx)][tuple(upstream_idx)].item()
-                        if abs(weight) > edge_threshold:
-                            uname = get_name(component, layer, upstream_idx)
-                            dname = get_name('resid', layer, downstream_idx)
-                            G.edge(
-                                uname, dname,
-                                penwidth=str(abs(weight) * pen_thickness),
-                                color = 'red' if weight < 0 else 'blue'
-                            )
-                            edgeset.add((uname, dname))
-            
-            # add edges to previous layer resid
-            for component in ['attn', 'mlp', 'resid']:
-                if layer == -1: continue
-                for upstream_idx in nodes_by_submod[f'resid_{layer-1}'].keys():
-                    for downstream_idx in nodes_by_submod[f'{component}_{layer}'].keys():
-                        weight = edges[f'resid_{layer-1}'][f'{component}_{layer}'][tuple(downstream_idx)][tuple(upstream_idx)].item()
-                        if abs(weight) > edge_threshold:
-                            uname = get_name('resid', layer-1, upstream_idx)
-                            dname = get_name(component, layer, downstream_idx)
-                            G.edge(
-                                uname, dname,
-                                penwidth=str(abs(weight) * pen_thickness),
-                                color = 'red' if weight < 0 else 'blue'
-                            )
-                            edgeset.add((uname, dname))
+        for component in ['attn', 'mlp']:
+            if layer == -1: continue
+            for upstream_idx in nodes_by_submod[f'{component}_{layer}'].keys():
+                for downstream_idx in nodes_by_submod[f'resid_{layer}'].keys():
+                    weight = edges[f'{component}_{layer}'][f'resid_{layer}'][tuple(downstream_idx)][tuple(upstream_idx)].item()
+                    if abs(weight) > edge_threshold:
+                        uname = get_name(component, layer, upstream_idx)
+                        dname = get_name('resid', layer, downstream_idx)
+                        G.edge(
+                            uname, dname,
+                            penwidth=str(abs(weight) * pen_thickness),
+                            color = 'red' if weight < 0 else 'blue'
+                        )
+                        edgeset.add((uname, dname))
+        
+        # add edges to previous layer resid
+        for component in ['attn', 'mlp', 'resid']:
+            if layer == -1: continue
+            for upstream_idx in nodes_by_submod[f'resid_{layer-1}'].keys():
+                for downstream_idx in nodes_by_submod[f'{component}_{layer}'].keys():
+                    weight = edges[f'resid_{layer-1}'][f'{component}_{layer}'][tuple(downstream_idx)][tuple(upstream_idx)].item()
+                    if abs(weight) > edge_threshold:
+                        uname = get_name('resid', layer-1, upstream_idx)
+                        dname = get_name(component, layer, downstream_idx)
+                        G.edge(
+                            uname, dname,
+                            penwidth=str(abs(weight) * pen_thickness),
+                            color = 'red' if weight < 0 else 'blue'
+                        )
+                        edgeset.add((uname, dname))
 
-            # the cherry on top
-            G.node('y', shape='diamond')
-            for idx in nodes_by_submod[f'resid_{layers-1}'].keys():
-                weight = edges[f'resid_{layers-1}']['y'][tuple(idx)].item()
-                if abs(weight) > edge_threshold:
-                    name = get_name('resid', layers-1, idx)
-                    G.edge(
-                        name, 'y',
-                        penwidth=str(abs(weight) * pen_thickness),
-                        color = 'red' if weight < 0 else 'blue'
-                    )
-                    edgeset.add((name, 'y'))
-        else:
-            # Add the 'y' node without edges when plot_edges is False
-            G.node('y', shape='diamond')
+
+    # the cherry on top
+    G.node('y', shape='diamond')
+    for idx in nodes_by_submod[f'resid_{layers-1}'].keys():
+        weight = edges[f'resid_{layers-1}']['y'][tuple(idx)].item()
+        if abs(weight) > edge_threshold:
+            name = get_name('resid', layers-1, idx)
+            G.edge(
+                name, 'y',
+                penwidth=str(abs(weight) * pen_thickness),
+                color = 'red' if weight < 0 else 'blue'
+            )
+            edgeset.add((uname, dname))
 
     if not os.path.exists(os.path.dirname(save_dir)):
         os.makedirs(os.path.dirname(save_dir))
