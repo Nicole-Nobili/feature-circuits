@@ -2,6 +2,8 @@ from graphviz import Digraph
 from collections import defaultdict
 import re
 import os
+from transformers import AutoTokenizer
+
 
 def get_name(component, layer, idx):
     match idx:
@@ -175,6 +177,11 @@ def plot_nodes_posaligned(nodes, edges, layers=6, length=6, example_text="The ma
     scale = max(abs(min_effect), abs(max_effect))
 
     words = example_text.split()
+    print(words)
+    if length != len(words):
+        tokenizer = AutoTokenizer.from_pretrained("EleutherAI/pythia-70m-deduped")
+        words = [tokenizer.decode(i) for i in tokenizer.encode(example_text)]
+        print(words)
 
     # for deciding shade of node
     def to_hex(number):
@@ -360,7 +367,11 @@ def plot_circuit_posaligned(nodes, edges, layers=6, length=6, example_text="The 
     scale = max(abs(min_effect), abs(max_effect))
 
     words = example_text.split()
-
+    print(words)
+    if length != len(words):
+        tokenizer = AutoTokenizer.from_pretrained("EleutherAI/pythia-70m-deduped")
+        words = [tokenizer.decode(i) for i in tokenizer.encode(example_text)]
+        print(words)
     # for deciding shade of node
     def to_hex(number):
         number = number / scale
