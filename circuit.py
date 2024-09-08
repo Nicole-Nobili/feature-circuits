@@ -108,7 +108,7 @@ def get_circuit(
         dictionaries,
         metric_fn,
         metric_kwargs=metric_kwargs,
-        method='exact' if not component_level else 'exact', # get better approximations for early layers by using ig. For now for component level let's use exact that should be more precise since component level is faster
+        method='ig' if not component_level else 'exact', # get better approximations for early layers by using ig. For now for component level let's use exact that should be more precise since component level is faster
         component_level=component_level,
     )
 
@@ -457,7 +457,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='cuda:0')
     args = parser.parse_args()
     
-    args.plot_only = True
+    args.plot_only = False
     args.nodes_only = False
     
     if args.plot_only:
