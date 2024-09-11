@@ -457,9 +457,9 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='cuda:0')
     args = parser.parse_args()
     
-    args.plot_only = True
+    args.plot_only = False
     args.nodes_only = True
-    args.component_level = True
+    args.component_level = False
     
     if args.plot_only:
         print("Plot only is true. Only plotting circuit...")
