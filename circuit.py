@@ -459,7 +459,7 @@ if __name__ == '__main__':
     
     args.plot_only = False
     args.nodes_only = True
-    args.component_level = False
+    args.component_level = True
     
     if args.plot_only:
         print("Plot only is true. Only plotting circuit...")
